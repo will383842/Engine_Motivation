@@ -1,0 +1,160 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: mt-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USERNAME:-motivation}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-motivation_secret}
+      POSTGRES_DB: ${DB_DATABASE:-motivation_engine}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-motivation}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+
+  redis:
+    image: redis:7-alpine
+    container_name: mt-redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - internal
+
+  app:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: mt-app
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - public_shared:/var/www/html/public-shared
+      - app_storage:/var/www/html/storage
+    networks:
+      - internal
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: mt-worker
+    restart: unless-stopped
+    command: ["php", "artisan", "queue:work", "redis", "--queue=motivation-messages,motivation-campaigns,default", "--sleep=3", "--tries=3", "--max-time=3600"]
+    env_file:
+      - .env.production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - app_storage:/var/www/html/storage
+    networks:
+      - internal
+
+  worker-whatsapp:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: mt-worker-whatsapp
+    restart: unless-stopped
+    command: ["php", "artisan", "queue:work", "redis", "--queue=whatsapp-messages", "--sleep=5", "--tries=3", "--max-time=3600"]
+    env_file:
+      - .env.production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - app_storage:/var/www/html/storage
+    networks:
+      - internal
+
+  worker-telegram:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: mt-worker-telegram
+    restart: unless-stopped
+    command: ["php", "artisan", "queue:work", "redis", "--queue=telegram-messages", "--sleep=3", "--tries=3", "--max-time=3600"]
+    env_file:
+      - .env.production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - app_storage:/var/www/html/storage
+    networks:
+      - internal
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: mt-scheduler
+    restart: unless-stopped
+    command: ["/bin/sh", "-c", "while true; do php artisan schedule:run --verbose; sleep 60; done"]
+    env_file:
+      - .env.production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - app_storage:/var/www/html/storage
+    networks:
+      - internal
+
+  nginx:
+    image: nginx:alpine
+    container_name: mt-nginx
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8082:80"
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - public_shared:/var/www/html/public:ro
+    depends_on:
+      - app
+    networks:
+      - internal
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  app_storage:
+    driver: local
+  public_shared:
+    driver: local
+
+networks:
+  internal:
+    driver: bridge

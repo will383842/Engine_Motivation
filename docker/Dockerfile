@@ -30,31 +30,38 @@ COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
 WORKDIR /var/www/html
 
-# Copy application
-COPY . .
+# Copy composer files first for layer caching
+COPY composer.json composer.lock ./
 
 # Install dependencies (no dev)
-RUN composer install --no-dev --optimize-autoloader --no-interaction
+RUN composer install --no-dev --no-scripts --no-autoloader --prefer-dist
 
-# Cache config/routes/views
-RUN php artisan config:cache \
-    && php artisan route:cache \
-    && php artisan view:cache \
-    && php artisan event:cache
+# Copy application code
+COPY . .
+
+# Generate optimized autoloader
+RUN composer dump-autoload --optimize
+
+# Create shared public directory
+RUN mkdir -p /var/www/html/public-shared
 
 # Set ownership to www-data
-RUN chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache
+RUN chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache /var/www/html/public-shared \
+    && chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache
 
-# PHP-FPM healthcheck script
-RUN echo '#!/bin/sh' > /usr/local/bin/php-fpm-healthcheck \
-    && echo 'SCRIPT_NAME=/ping SCRIPT_FILENAME=/ping REQUEST_METHOD=GET cgi-fcgi -bind -connect 127.0.0.1:9000 2>/dev/null | grep -q pong' >> /usr/local/bin/php-fpm-healthcheck \
-    && chmod +x /usr/local/bin/php-fpm-healthcheck
+# Entrypoint
+COPY deploy/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
 
-USER www-data
+# PHP-FPM tuning
+RUN echo '[www]' > /usr/local/etc/php-fpm.d/zz-custom.conf \
+    && echo 'pm = dynamic' >> /usr/local/etc/php-fpm.d/zz-custom.conf \
+    && echo 'pm.max_children = 20' >> /usr/local/etc/php-fpm.d/zz-custom.conf \
+    && echo 'pm.start_servers = 4' >> /usr/local/etc/php-fpm.d/zz-custom.conf \
+    && echo 'pm.min_spare_servers = 2' >> /usr/local/etc/php-fpm.d/zz-custom.conf \
+    && echo 'pm.max_spare_servers = 6' >> /usr/local/etc/php-fpm.d/zz-custom.conf
 
 EXPOSE 9000
 
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-    CMD php-fpm-healthcheck || exit 1
-
+ENTRYPOINT ["entrypoint.sh"]
 CMD ["php-fpm"]
