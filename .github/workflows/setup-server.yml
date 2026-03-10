@@ -1,0 +1,251 @@
+name: Initial Server Setup
+
+on:
+  workflow_dispatch:
+
+jobs:
+  setup:
+    name: Setup Engine Motivation on Hetzner VPS
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Initial server setup via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: root
+          password: ${{ secrets.SERVER_PASSWORD }}
+          script_stop: true
+          command_timeout: 12m
+          script: |
+            set -e
+            echo "=== 1. Clone repository ==="
+            if [ -d /opt/engine-motivation/.git ]; then
+              echo "Repo already exists, pulling latest..."
+              cd /opt/engine-motivation
+              git fetch origin main
+              git reset --hard origin/main
+            else
+              git clone https://github.com/will383842/Engine_Motivation.git /opt/engine-motivation
+            fi
+
+            cd /opt/engine-motivation
+
+            echo "=== 2. Generate APP_KEY ==="
+            APP_KEY=$(openssl rand -base64 32)
+
+            echo "=== 3. Create .env.production ==="
+            cat > .env.production << 'ENVEOF'
+APP_NAME="Motivation Engine"
+APP_ENV=production
+APP_DEBUG=false
+APP_TIMEZONE=UTC
+APP_URL=https://motivation.life-expat.com
+
+APP_LOCALE=fr
+APP_FALLBACK_LOCALE=en
+APP_FAKER_LOCALE=fr_FR
+
+LOG_CHANNEL=stack
+LOG_STACK=single
+LOG_DEPRECATIONS_CHANNEL=null
+LOG_LEVEL=info
+
+DB_CONNECTION=pgsql
+DB_HOST=mt-postgres
+DB_PORT=5432
+DB_DATABASE=motivation_engine
+DB_USERNAME=motivation
+DB_PASSWORD=WJullin1974Motiv
+
+REDIS_CLIENT=phpredis
+REDIS_HOST=mt-redis
+REDIS_PASSWORD=
+REDIS_PORT=6379
+
+QUEUE_CONNECTION=redis
+CACHE_STORE=redis
+SESSION_DRIVER=redis
+SESSION_LIFETIME=120
+
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_ADMIN_CHAT_ID=
+TELEGRAM_WEBHOOK_SECRET=
+
+TWILIO_SID=
+TWILIO_AUTH_TOKEN=
+TWILIO_WHATSAPP_FROM=+14155238886
+
+FIREBASE_WEBHOOK_SECRET=
+
+WHATSAPP_WARMUP_START_DATE=
+WHATSAPP_DAILY_BUDGET_CENTS=2000
+WHATSAPP_MONTHLY_BUDGET_CENTS=30000
+
+ADMIN_DEFAULT_PASSWORD=MJMJsblanc19522008/*%$
+ADMIN_ALERT_EMAIL=williamsjullin@gmail.com
+ADMIN_ALERT_PHONE=
+ADMIN_ALLOWED_IPS=
+
+MAIL_MAILER=smtp
+MAIL_HOST=smtp.zoho.eu
+MAIL_PORT=587
+MAIL_USERNAME=
+MAIL_PASSWORD=
+MAIL_ENCRYPTION=tls
+MAIL_FROM_ADDRESS="noreply@motivation.life-expat.com"
+MAIL_FROM_NAME="Motivation Engine"
+ENVEOF
+
+            # Inject generated APP_KEY
+            sed -i "s|APP_KEY=.*|APP_KEY=base64:${APP_KEY}|" .env.production
+
+            echo "=== 4. Build and start containers ==="
+            docker compose build --no-cache
+            docker compose up -d
+
+            echo "=== 5. Wait for PostgreSQL ==="
+            sleep 10
+            docker compose exec -T postgres pg_isready -U motivation || sleep 5
+
+            echo "=== 6. Run migrations ==="
+            docker compose exec -T app php artisan migrate --force
+
+            echo "=== 7. Seed admin user and templates ==="
+            docker compose exec -T app php artisan db:seed --class=AdminUserSeeder --force || echo "AdminUserSeeder failed (may already exist)"
+            docker compose exec -T app php artisan db:seed --class=MessageTemplateSeeder --force || echo "MessageTemplateSeeder skipped"
+
+            echo "=== 8. Cache config ==="
+            docker compose exec -T app php artisan optimize
+
+            echo "=== 9. Configure reverse proxy ==="
+            # Add motivation.life-expat.com server block to bl-nginx
+            cat > /tmp/motivation-proxy.conf << 'NGINXEOF'
+server {
+    listen 80;
+    server_name motivation.life-expat.com;
+
+    client_max_body_size 10M;
+
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml;
+    gzip_min_length 256;
+
+    location / {
+        proxy_pass http://127.0.0.1:8082;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 60s;
+        proxy_connect_timeout 10s;
+    }
+}
+NGINXEOF
+
+            # Check if host nginx is installed, if not install it
+            if ! command -v nginx &> /dev/null; then
+              echo "Installing host-level nginx for reverse proxy..."
+              apt-get update -qq && apt-get install -y -qq nginx
+              # Stop default nginx to avoid port conflict with bl-nginx
+              systemctl stop nginx
+
+              # Move bl-nginx off port 80 to internal port
+              # Update backlink docker-compose to use 127.0.0.1:8081 instead of 80
+              if [ -f /opt/backlink-engine/docker-compose.yml ]; then
+                sed -i 's/"80:80"/"127.0.0.1:8081:80"/' /opt/backlink-engine/docker-compose.yml
+                cd /opt/backlink-engine && docker compose up -d nginx && cd /opt/engine-motivation
+              fi
+
+              # Create host nginx config for all apps
+              cat > /etc/nginx/sites-available/reverse-proxy << 'RPEOF'
+# Backlink Engine
+server {
+    listen 80;
+    server_name backlinks.life-expat.com;
+    client_max_body_size 10M;
+
+    location / {
+        proxy_pass http://127.0.0.1:8081;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_cache_bypass $http_upgrade;
+        proxy_read_timeout 60s;
+    }
+}
+
+# Telegram Engine
+server {
+    listen 80;
+    server_name telegram.life-expat.com;
+    client_max_body_size 10M;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 60s;
+    }
+}
+
+# Motivation Engine
+server {
+    listen 80;
+    server_name motivation.life-expat.com;
+    client_max_body_size 10M;
+
+    location / {
+        proxy_pass http://127.0.0.1:8082;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 60s;
+    }
+}
+RPEOF
+
+              ln -sf /etc/nginx/sites-available/reverse-proxy /etc/nginx/sites-enabled/reverse-proxy
+              rm -f /etc/nginx/sites-enabled/default
+              nginx -t && systemctl start nginx && systemctl enable nginx
+              echo "Host nginx installed and configured as reverse proxy"
+            else
+              # Host nginx already exists, just add motivation config
+              cp /tmp/motivation-proxy.conf /etc/nginx/sites-available/motivation
+              ln -sf /etc/nginx/sites-available/motivation /etc/nginx/sites-enabled/motivation
+              nginx -t && systemctl reload nginx
+              echo "Motivation proxy added to existing host nginx"
+            fi
+
+            echo "=== 10. Container status ==="
+            docker ps --filter 'name=mt-' --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
+
+            echo ""
+            echo "=== 11. Test health endpoint ==="
+            sleep 3
+            curl -s http://127.0.0.1:8082/up | head -10 || echo "Health check pending..."
+
+            echo ""
+            echo "=== SETUP COMPLETE ==="
+            echo "Services running:"
+            echo "  - backlinks.life-expat.com  → 127.0.0.1:8081 (bl-nginx)"
+            echo "  - telegram.life-expat.com   → 127.0.0.1:8080 (tg-nginx)"
+            echo "  - motivation.life-expat.com → 127.0.0.1:8082 (mt-nginx)"
+            echo ""
+            echo "Next steps:"
+            echo "  1. Point motivation.life-expat.com DNS A record to 89.167.26.169"
+            echo "  2. Enable Cloudflare proxy (orange cloud) for SSL"
