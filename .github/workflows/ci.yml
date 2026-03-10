@@ -1,0 +1,202 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  PHP_VERSION: '8.3'
+  DOCKER_IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  test:
+    name: Tests & Static Analysis
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: motivation_engine_test
+          POSTGRES_USER: motivation
+          POSTGRES_PASSWORD: testing
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U motivation"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup PHP ${{ env.PHP_VERSION }}
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          extensions: pdo_pgsql, redis, pcntl, zip, gd, intl
+          coverage: none
+
+      - name: Get Composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
+
+      - name: Cache Composer dependencies
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+          restore-keys: ${{ runner.os }}-composer-
+
+      - name: Install dependencies
+        run: composer install --no-interaction --prefer-dist --optimize-autoloader
+
+      - name: Copy environment file
+        run: cp .env.example .env
+
+      - name: Generate application key
+        run: php artisan key:generate
+
+      - name: Run Laravel Pint (code style)
+        run: vendor/bin/pint --test
+
+      - name: Run PHPStan (static analysis)
+        run: vendor/bin/phpstan analyse --memory-limit=512M
+
+      - name: Run migrations
+        env:
+          DB_CONNECTION: pgsql
+          DB_HOST: 127.0.0.1
+          DB_PORT: 5432
+          DB_DATABASE: motivation_engine_test
+          DB_USERNAME: motivation
+          DB_PASSWORD: testing
+          REDIS_HOST: 127.0.0.1
+          REDIS_PORT: 6379
+        run: php artisan migrate --force
+
+      - name: Run tests in parallel
+        env:
+          DB_CONNECTION: pgsql
+          DB_HOST: 127.0.0.1
+          DB_PORT: 5432
+          DB_DATABASE: motivation_engine_test
+          DB_USERNAME: motivation
+          DB_PASSWORD: testing
+          REDIS_HOST: 127.0.0.1
+          REDIS_PORT: 6379
+        run: php artisan test --parallel
+
+  build:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.DOCKER_IMAGE }}
+          tags: |
+            type=sha,prefix=
+            type=raw,value=latest
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: production
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            set -e
+            cd /opt/engine-motivation
+
+            # Pull latest code
+            git fetch origin main
+            git reset --hard origin/main
+
+            # Pull latest Docker image
+            docker compose -f docker-compose.prod.yml pull app
+
+            # Run migrations before restart
+            docker compose -f docker-compose.prod.yml exec -T app php artisan migrate --force
+
+            # Cache config/routes/views for performance
+            docker compose -f docker-compose.prod.yml exec -T app php artisan config:cache
+            docker compose -f docker-compose.prod.yml exec -T app php artisan route:cache
+            docker compose -f docker-compose.prod.yml exec -T app php artisan view:cache
+            docker compose -f docker-compose.prod.yml exec -T app php artisan event:cache
+
+            # Zero-downtime restart: scale up new workers, then remove old ones
+            docker compose -f docker-compose.prod.yml up -d --no-deps --scale worker=2 worker
+            sleep 5
+            docker compose -f docker-compose.prod.yml up -d --no-deps --scale worker=1 worker
+
+            # Restart remaining services with rolling update
+            docker compose -f docker-compose.prod.yml up -d --no-deps app
+            docker compose -f docker-compose.prod.yml up -d --no-deps scheduler
+            docker compose -f docker-compose.prod.yml up -d --no-deps worker-whatsapp-1 worker-whatsapp-2
+            docker compose -f docker-compose.prod.yml up -d --no-deps worker-telegram-1 worker-telegram-2
+
+            # Restart queue workers gracefully (finish current job, then exit)
+            docker compose -f docker-compose.prod.yml exec -T worker php artisan queue:restart
+            docker compose -f docker-compose.prod.yml exec -T worker-whatsapp-1 php artisan queue:restart
+            docker compose -f docker-compose.prod.yml exec -T worker-whatsapp-2 php artisan queue:restart
+            docker compose -f docker-compose.prod.yml exec -T worker-telegram-1 php artisan queue:restart
+            docker compose -f docker-compose.prod.yml exec -T worker-telegram-2 php artisan queue:restart
+
+            echo "Deployment complete at $(date)"
