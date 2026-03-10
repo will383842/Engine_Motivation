@@ -68,7 +68,8 @@ class ReconcileFirebaseChatters extends Command
             $this->warn("  Missing locally (in Firebase but not PG): {$missingLocally->count()}");
             foreach ($missingLocally->take(20) as $uid) {
                 $fbData = $firebaseChatters->firstWhere('uid', $uid);
-                $this->line("    - {$uid} ({$fbData['email'] ?? 'no email'})");
+                $email = $fbData['email'] ?? 'no email';
+                $this->line("    - {$uid} ({$email})");
 
                 if (!$dryRun) {
                     // Auto-create from Firebase data
