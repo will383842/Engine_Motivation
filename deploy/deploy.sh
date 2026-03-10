@@ -6,7 +6,7 @@ set -e
 # Usage: ./deploy/deploy.sh
 # ============================================================
 
-SERVER="root@89.167.26.169"
+SERVER="root@46.62.168.55"
 REMOTE_DIR="/opt/engine-motivation"
 REPO_URL="https://github.com/will383842/Engine_Motivation.git"
 
@@ -72,6 +72,6 @@ ssh $SERVER "
 echo ""
 echo "=== DEPLOYMENT COMPLETE ==="
 echo "Next steps:"
-echo "  1. Point motivation.life-expat.com DNS A record to 89.167.26.169"
+echo "  1. Point motivation.life-expat.com DNS A record to 46.62.168.55"
 echo "  2. Configure SSL via Cloudflare proxy (orange cloud)"
 echo "  3. Add reverse proxy rule in bl-nginx or global nginx"
