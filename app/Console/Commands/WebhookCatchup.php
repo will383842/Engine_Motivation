@@ -65,7 +65,8 @@ class WebhookCatchup extends Command
                 ProcessWebhookEvent::dispatch($event)->onQueue('webhooks');
 
                 $dispatched++;
-                $this->line("  Re-dispatched: {$event->id} ({$event->event_type}, attempt #{$attempts + 1})");
+                $attempt = $attempts + 1;
+                $this->line("  Re-dispatched: {$event->id} ({$event->event_type}, attempt #{$attempt})");
             } catch (\Throwable $e) {
                 $skipped++;
                 $this->error("  Failed to re-dispatch {$event->id}: {$e->getMessage()}");
