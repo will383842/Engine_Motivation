@@ -151,6 +151,15 @@ jobs:
               echo "=== VERIFY ==="
               curl -s -o /dev/null -w "GET /admin/login: HTTP %{http_code}\n" http://127.0.0.1:8082/admin/login
               curl -s -o /dev/null -w "GET /livewire/livewire.js: HTTP %{http_code}\n" http://127.0.0.1:8082/livewire/livewire.js
+              echo "--- Livewire routes ---"
+              docker exec mt-app php artisan route:list --path=livewire 2>&1 | head -10
+              echo "--- Check index.php in shared volume ---"
+              docker exec mt-nginx ls -la /var/www/html/public/index.php 2>&1 || echo "no index.php"
+              docker exec mt-nginx ls -la /var/www/html/public/vendor/livewire/ 2>&1 || echo "no livewire assets"
+              echo "--- Test livewire.js via nginx error log ---"
+              docker exec mt-nginx cat /var/log/nginx/error.log 2>&1 | tail -5 || echo "no error log"
+              echo "--- Entrypoint output ---"
+              docker logs mt-app 2>&1 | head -30
               docker ps --filter 'name=mt-' --format 'table {{.Names}}\t{{.Status}}' | head -10
               echo "Deploy complete: $(date)"
             fi
