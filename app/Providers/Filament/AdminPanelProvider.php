@@ -62,7 +62,6 @@ class AdminPanelProvider extends PanelProvider
             ->authMiddleware([
                 Authenticate::class,
             ])
-            ->locales(['fr', 'en'])
-            ->defaultLocale('fr');
+;
     }
 }
