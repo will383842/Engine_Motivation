@@ -17,7 +17,7 @@ jobs:
           host: ${{ secrets.SERVER_HOST }}
           username: root
           password: ${{ secrets.SERVER_PASSWORD }}
-          script_stop: true
+          debug: true
           script: |
             cd /opt/engine-motivation
 
