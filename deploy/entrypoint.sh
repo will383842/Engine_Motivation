@@ -8,13 +8,15 @@ fi
 
 # Run deferred composer scripts that were skipped during Docker build
 # (package:discover + filament:upgrade need DB/Redis available at runtime)
-php artisan package:discover --ansi 2>/dev/null || true
-php artisan filament:upgrade 2>/dev/null || true
+php artisan package:discover --ansi || true
+php artisan filament:upgrade || true
 
-# Cache config on startup (uses runtime env vars from docker-compose env_file)
-php artisan config:cache 2>/dev/null || true
-php artisan route:cache 2>/dev/null || true
-php artisan view:cache 2>/dev/null || true
-php artisan event:cache 2>/dev/null || true
+# Cache config and views (NOT routes — Filament registers routes dynamically)
+php artisan config:cache || true
+php artisan view:cache || true
+php artisan event:cache || true
+
+# Clear any stale route cache (Filament needs dynamic route resolution)
+php artisan route:clear || true
 
 exec "$@"

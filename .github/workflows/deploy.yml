@@ -124,7 +124,10 @@ jobs:
               docker compose up -d --force-recreate app worker worker-whatsapp worker-telegram scheduler nginx
               sleep 5
               docker exec mt-app php artisan optimize:clear
-              docker exec mt-app php artisan optimize
+              docker exec mt-app php artisan config:cache
+              docker exec mt-app php artisan view:cache
+              docker exec mt-app php artisan event:cache
+              docker exec mt-app php artisan route:clear
               docker exec mt-app php artisan migrate --force
               if [ ! -f /etc/nginx/sites-available/motivation ]; then
                 echo "=== SETUP REVERSE PROXY ==="
