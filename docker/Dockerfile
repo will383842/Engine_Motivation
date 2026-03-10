@@ -1,4 +1,4 @@
-FROM php:8.2-fpm-alpine AS production
+FROM php:8.3-fpm-alpine AS production
 
 # Install system dependencies
 RUN apk add --no-cache \
@@ -39,8 +39,10 @@ RUN composer install --no-dev --no-scripts --no-autoloader --prefer-dist
 # Copy application code
 COPY . .
 
-# Generate optimized autoloader
-RUN composer dump-autoload --optimize
+# Generate optimized autoloader (skip post-autoload-dump scripts like
+# package:discover and filament:upgrade — they require DB/Redis which
+# are unavailable during build; they run at container startup instead)
+RUN composer dump-autoload --optimize --no-scripts
 
 # Create shared public directory
 RUN mkdir -p /var/www/html/public-shared

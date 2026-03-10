@@ -27,6 +27,7 @@ class Chatter extends Model
         'timezone',
         'telegram_id',
         'whatsapp_phone',
+        'whatsapp_opted_in',
         'preferred_channel',
         'current_streak',
         'longest_streak',
