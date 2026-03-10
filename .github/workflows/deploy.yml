@@ -148,33 +148,9 @@ jobs:
                 systemctl enable nginx
                 echo "Reverse proxy configured"
               fi
-              echo "=== DIAGNOSTICS ==="
-              echo "--- Route list (admin) ---"
-              docker exec mt-app php artisan route:list --path=admin 2>&1 | head -30 || echo "route:list failed"
-              echo ""
-              echo "--- Package discover status ---"
-              docker exec mt-app php artisan package:discover 2>&1 | tail -10 || echo "package:discover failed"
-              echo ""
-              echo "--- Filament info ---"
-              docker exec mt-app php artisan about 2>&1 | grep -i filament || echo "no filament info"
-              echo ""
-              echo "--- Test GET /admin/login ---"
+              echo "=== VERIFY ==="
               curl -s -o /dev/null -w "GET /admin/login: HTTP %{http_code}\n" http://127.0.0.1:8082/admin/login
-              echo ""
-              echo "--- Test POST /admin/login ---"
-              curl -s -o /dev/null -w "POST /admin/login: HTTP %{http_code}\n" -X POST http://127.0.0.1:8082/admin/login -d "email=test&password=test"
-              echo ""
-              echo "--- Test POST with verbose ---"
-              curl -s -D - -X POST http://127.0.0.1:8082/admin/login -d "email=test&password=test" 2>&1 | head -20
-              echo ""
-              echo "--- Host nginx config ---"
-              cat /etc/nginx/sites-available/motivation 2>/dev/null || echo "no motivation config"
-              echo ""
-              echo "--- Host nginx status ---"
-              systemctl status nginx 2>&1 | head -10 || echo "nginx not running"
-              echo ""
-              echo "--- App logs (last 20 lines) ---"
-              docker exec mt-app cat storage/logs/laravel.log 2>&1 | tail -20 || echo "no logs"
-              echo ""
+              curl -s -o /dev/null -w "GET /livewire/livewire.js: HTTP %{http_code}\n" http://127.0.0.1:8082/livewire/livewire.js
+              docker ps --filter 'name=mt-' --format 'table {{.Names}}\t{{.Status}}' | head -10
               echo "Deploy complete: $(date)"
             fi

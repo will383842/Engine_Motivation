@@ -11,6 +11,9 @@ fi
 php artisan package:discover --ansi || true
 php artisan filament:upgrade || true
 
+# Publish Livewire assets so they can be served as static files by nginx
+php artisan livewire:publish --assets || true
+
 # Cache config and views (NOT routes — Filament registers routes dynamically)
 php artisan config:cache || true
 php artisan view:cache || true
