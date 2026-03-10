@@ -81,6 +81,7 @@ jobs:
               echo "MAIL_ENCRYPTION=tls" >> .env.production
               echo 'MAIL_FROM_ADDRESS="noreply@motivation.life-expat.com"' >> .env.production
               echo 'MAIL_FROM_NAME="Motivation Engine"' >> .env.production
+              cp .env.production .env
               docker compose build --no-cache
               docker compose up -d
               echo "Waiting for PostgreSQL..."
