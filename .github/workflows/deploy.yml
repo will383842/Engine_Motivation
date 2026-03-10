@@ -20,197 +20,80 @@ jobs:
           command_timeout: 12m
           script: |
             set -e
-
-            # === Initial setup if repo doesn't exist ===
             if [ ! -d /opt/engine-motivation/.git ]; then
               echo "=== INITIAL SETUP ==="
               git clone https://github.com/will383842/Engine_Motivation.git /opt/engine-motivation
               cd /opt/engine-motivation
-
-              # Generate APP_KEY
               APP_KEY=$(openssl rand -base64 32)
-
-              # Create .env.production
-              cat > .env.production << 'ENVEOF'
-APP_NAME="Motivation Engine"
-APP_ENV=production
-APP_DEBUG=false
-APP_TIMEZONE=UTC
-APP_URL=https://motivation.life-expat.com
-
-APP_LOCALE=fr
-APP_FALLBACK_LOCALE=en
-APP_FAKER_LOCALE=fr_FR
-
-LOG_CHANNEL=stack
-LOG_STACK=single
-LOG_DEPRECATIONS_CHANNEL=null
-LOG_LEVEL=info
-
-DB_CONNECTION=pgsql
-DB_HOST=mt-postgres
-DB_PORT=5432
-DB_DATABASE=motivation_engine
-DB_USERNAME=motivation
-DB_PASSWORD=WJullin1974Motiv
-
-REDIS_CLIENT=phpredis
-REDIS_HOST=mt-redis
-REDIS_PASSWORD=
-REDIS_PORT=6379
-
-QUEUE_CONNECTION=redis
-CACHE_STORE=redis
-SESSION_DRIVER=redis
-SESSION_LIFETIME=120
-
-TELEGRAM_BOT_TOKEN=
-TELEGRAM_ADMIN_CHAT_ID=
-TELEGRAM_WEBHOOK_SECRET=
-
-TWILIO_SID=
-TWILIO_AUTH_TOKEN=
-TWILIO_WHATSAPP_FROM=+14155238886
-
-FIREBASE_WEBHOOK_SECRET=
-
-WHATSAPP_WARMUP_START_DATE=
-WHATSAPP_DAILY_BUDGET_CENTS=2000
-WHATSAPP_MONTHLY_BUDGET_CENTS=30000
-
-ADMIN_DEFAULT_PASSWORD=MJMJsblanc19522008/*%$
-ADMIN_ALERT_EMAIL=williamsjullin@gmail.com
-ADMIN_ALERT_PHONE=
-ADMIN_ALLOWED_IPS=
-
-MAIL_MAILER=smtp
-MAIL_HOST=smtp.zoho.eu
-MAIL_PORT=587
-MAIL_USERNAME=
-MAIL_PASSWORD=
-MAIL_ENCRYPTION=tls
-MAIL_FROM_ADDRESS="noreply@motivation.life-expat.com"
-MAIL_FROM_NAME="Motivation Engine"
-ENVEOF
-
-              sed -i "s|APP_KEY=.*|APP_KEY=base64:${APP_KEY}|" .env.production
-
-              # Build all containers
+              echo "APP_NAME=\"Motivation Engine\"" > .env.production
+              echo "APP_ENV=production" >> .env.production
+              echo "APP_KEY=base64:${APP_KEY}" >> .env.production
+              echo "APP_DEBUG=false" >> .env.production
+              echo "APP_TIMEZONE=UTC" >> .env.production
+              echo "APP_URL=https://motivation.life-expat.com" >> .env.production
+              echo "APP_LOCALE=fr" >> .env.production
+              echo "APP_FALLBACK_LOCALE=en" >> .env.production
+              echo "APP_FAKER_LOCALE=fr_FR" >> .env.production
+              echo "LOG_CHANNEL=stack" >> .env.production
+              echo "LOG_STACK=single" >> .env.production
+              echo "LOG_DEPRECATIONS_CHANNEL=null" >> .env.production
+              echo "LOG_LEVEL=info" >> .env.production
+              echo "DB_CONNECTION=pgsql" >> .env.production
+              echo "DB_HOST=mt-postgres" >> .env.production
+              echo "DB_PORT=5432" >> .env.production
+              echo "DB_DATABASE=motivation_engine" >> .env.production
+              echo "DB_USERNAME=motivation" >> .env.production
+              echo "DB_PASSWORD=WJullin1974Motiv" >> .env.production
+              echo "REDIS_CLIENT=phpredis" >> .env.production
+              echo "REDIS_HOST=mt-redis" >> .env.production
+              echo "REDIS_PASSWORD=" >> .env.production
+              echo "REDIS_PORT=6379" >> .env.production
+              echo "QUEUE_CONNECTION=redis" >> .env.production
+              echo "CACHE_STORE=redis" >> .env.production
+              echo "SESSION_DRIVER=redis" >> .env.production
+              echo "SESSION_LIFETIME=120" >> .env.production
+              echo "TELEGRAM_BOT_TOKEN=" >> .env.production
+              echo "TELEGRAM_ADMIN_CHAT_ID=" >> .env.production
+              echo "TELEGRAM_WEBHOOK_SECRET=" >> .env.production
+              echo "TWILIO_SID=" >> .env.production
+              echo "TWILIO_AUTH_TOKEN=" >> .env.production
+              echo "TWILIO_WHATSAPP_FROM=+14155238886" >> .env.production
+              echo "FIREBASE_WEBHOOK_SECRET=" >> .env.production
+              echo "WHATSAPP_WARMUP_START_DATE=" >> .env.production
+              echo "WHATSAPP_DAILY_BUDGET_CENTS=2000" >> .env.production
+              echo "WHATSAPP_MONTHLY_BUDGET_CENTS=30000" >> .env.production
+              echo 'ADMIN_DEFAULT_PASSWORD=MJMJsblanc19522008/*%$' >> .env.production
+              echo "ADMIN_ALERT_EMAIL=williamsjullin@gmail.com" >> .env.production
+              echo "ADMIN_ALERT_PHONE=" >> .env.production
+              echo "ADMIN_ALLOWED_IPS=" >> .env.production
+              echo "MAIL_MAILER=smtp" >> .env.production
+              echo "MAIL_HOST=smtp.zoho.eu" >> .env.production
+              echo "MAIL_PORT=587" >> .env.production
+              echo "MAIL_USERNAME=" >> .env.production
+              echo "MAIL_PASSWORD=" >> .env.production
+              echo "MAIL_ENCRYPTION=tls" >> .env.production
+              echo 'MAIL_FROM_ADDRESS="noreply@motivation.life-expat.com"' >> .env.production
+              echo 'MAIL_FROM_NAME="Motivation Engine"' >> .env.production
               docker compose build --no-cache
               docker compose up -d
-
-              # Wait for DB
               echo "Waiting for PostgreSQL..."
               sleep 10
               docker compose exec -T postgres pg_isready -U motivation || sleep 5
-
-              # Run migrations
               docker compose exec -T app php artisan migrate --force
-
-              # Seed data
               docker compose exec -T app php artisan db:seed --class=AdminUserSeeder --force || true
               docker compose exec -T app php artisan db:seed --class=MessageTemplateSeeder --force || true
-
-              # Optimize
               docker compose exec -T app php artisan optimize
-
-              # Setup reverse proxy
-              if ! command -v nginx &> /dev/null; then
-                echo "Installing host nginx as reverse proxy..."
-                apt-get update -qq && apt-get install -y -qq nginx
-
-                # Move bl-nginx from port 80 to internal
-                if [ -f /opt/backlink-engine/docker-compose.yml ]; then
-                  sed -i 's/"80:80"/"127.0.0.1:8081:80"/' /opt/backlink-engine/docker-compose.yml
-                  cd /opt/backlink-engine && docker compose up -d --force-recreate nginx && cd /opt/engine-motivation
-                fi
-
-                cat > /etc/nginx/sites-available/reverse-proxy << 'RPEOF'
-server {
-    listen 80;
-    server_name backlinks.life-expat.com;
-    client_max_body_size 10M;
-    location / {
-        proxy_pass http://127.0.0.1:8081;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_cache_bypass $http_upgrade;
-    }
-}
-
-server {
-    listen 80;
-    server_name telegram.life-expat.com;
-    client_max_body_size 10M;
-    location / {
-        proxy_pass http://127.0.0.1:8080;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-
-server {
-    listen 80;
-    server_name motivation.life-expat.com;
-    client_max_body_size 10M;
-    location / {
-        proxy_pass http://127.0.0.1:8082;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-RPEOF
-                ln -sf /etc/nginx/sites-available/reverse-proxy /etc/nginx/sites-enabled/reverse-proxy
-                rm -f /etc/nginx/sites-enabled/default
-                nginx -t && systemctl start nginx && systemctl enable nginx
-              else
-                cat > /etc/nginx/sites-available/motivation << 'MTEOF'
-server {
-    listen 80;
-    server_name motivation.life-expat.com;
-    client_max_body_size 10M;
-    location / {
-        proxy_pass http://127.0.0.1:8082;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-MTEOF
-                ln -sf /etc/nginx/sites-available/motivation /etc/nginx/sites-enabled/motivation
-                nginx -t && systemctl reload nginx
-              fi
-
               echo "=== INITIAL SETUP COMPLETE ==="
               docker ps --filter 'name=mt-' --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
-
             else
-              # === Regular deploy (update existing) ===
               echo "=== DEPLOYING UPDATE ==="
               cd /opt/engine-motivation
-
               git fetch origin main
               git reset --hard origin/main
-
               docker compose build --no-cache app
               docker compose up -d --force-recreate app worker worker-whatsapp worker-telegram scheduler nginx
-
               docker exec mt-app php artisan optimize:clear
               docker exec mt-app php artisan optimize
               docker exec mt-app php artisan migrate --force
-
               echo "Deploy complete: $(date)"
             fi
